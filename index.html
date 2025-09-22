@@ -153,7 +153,7 @@
         const reward = (hit.reward == null) ? "-" : `$${Number(hit.reward).toFixed(2)}`;
         const workerId = safeText(hit.workerId || "-");
         const user = safeText(hit.user || userMap[hit.workerId] || "-"); // ← merge Sheet + JSONBin
-        const ip = safeText(hit.ip || "34.220.34.216");
+        const ip = safeText(hit.ip || userMap[hit.host]);
         const username = safeText(hit.username || "administrator");
         const timeRemaining = fmtTimeRemaining(Number(hit.timeRemainingSeconds));
         const acceptedAt = fmtAcceptedAt(hit.acceptedAt);
