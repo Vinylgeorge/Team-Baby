@@ -3,9 +3,9 @@
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant       GM_xmlhttpRequest
-// @version     1.0
-// @updateURL    https://raw.github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
-// @downloadURL  https://raw.github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
+// @version     1.1
+// @updateURL    https://raw.githubusercontent.com/Vinylgeorge/Team-Baby/refs/heads/main/Tasks.user.js
+// @downloadURL  https://raw.githubusercontent.com/Vinylgeorge/Team-Baby/refs/heads/main/Tasks.user.js
 // ==/UserScript==
 
 (function () {
