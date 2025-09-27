@@ -30,7 +30,7 @@
     const db = getFirestore(app);
 
     // --- 📋 Google Sheet User Mapping ---
-    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
+    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1ce5o_hv7I8T76qMMWfuWQGMDOtjUJPX46_qqLneorxs/export?format=csv&gid=0";
     const workerToUser = {};
 
     async function loadUserMap() {
