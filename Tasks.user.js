@@ -19,13 +19,13 @@
 
     // --- 🔥 Firebase Config ---
     const firebaseConfig = {
-      apiKey: "AIzaSyC57W83XkxdvM2aMQK8GIRYR2SJH1ORdfQ",
-      authDomain: "mturk-tasks-72994.firebaseapp.com",
-      projectId: "mturk-tasks-72994",
-      storageBucket: "mturk-tasks-72994.firebasestorage.app",
-      messagingSenderId: "305467873275",
-      appId: "1:305467873275:web:7b96048865c5305df1dd5e"
-    };
+  apiKey: "AIzaSyD_FH-65A526z8g9iGhSYKulS4yiv5e6Ys",
+  authDomain: "mturk-monitor.firebaseapp.com",
+  projectId: "mturk-monitor",
+  storageBucket: "mturk-monitor.firebasestorage.app",
+  messagingSenderId: "285174080989",
+  appId: "1:285174080989:web:e1f607e6a5f80463278234"
+};
 
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
