@@ -1,211 +1,124 @@
 // ==UserScript==
-// @name        MTurk Accepted HITs → JSONBin (Auto-Prune + Cleanup + CAPTCHA Popup)
+// @name        MTurk Task → Firestore + User Mapping (TTL Auto-Expire 10m)
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
-// @grant       GM_xmlhttpRequest
-// @version     1.1
-// @updateURL    https://raw.githubusercontent.com/Vinylgeorge/Team-Baby/refs/heads/main/Tasks.user.js
-// @downloadURL  https://raw.githubusercontent.com/Vinylgeorge/Team-Baby/refs/heads/main/Tasks.user.js
+// @grant       none
+// @version     1.0
+// @description Posts accepted HITs to Firestore with user mapping and automatic TTL cleanup after 10 minutes
 // ==/UserScript==
 
 (function () {
   'use strict';
 
-  const BIN_ID = "68ce9192d0ea881f40842a58";   // your JSONBin Bin ID
-  const API_KEY = "$2a$10$vfIYx4yJrkl1I5aWzNu7RuobcfJQhfZuW2d/lltml1q1C5u4Y4vJy";
-  const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+  const s = document.createElement("script");
+  s.type = "module";
+  s.textContent = `
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, setDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-  const BACKGROUND_CLEANUP_MS = 5 * 60 * 1000; // 5 minutes
-  const SAVE_INTERVAL_MS = 15 * 1000; // 15 seconds
-  const CAPTCHA_CHECK_MS = 15 * 1000; // 15 seconds
+    // --- 🔥 Firebase Config ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyC57W83XkxdvM2aMQK8GIRYR2SJH1ORdfQ",
+      authDomain: "mturk-tasks-72994.firebaseapp.com",
+      projectId: "mturk-tasks-72994",
+      storageBucket: "mturk-tasks-72994.firebasestorage.app",
+      messagingSenderId: "305467873275",
+      appId: "1:305467873275:web:7b96048865c5305df1dd5e"
+    };
 
-  let captchaPopup = null;
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
 
-  async function fetchExistingBin() {
-    try {
-      const headers = API_KEY ? { "X-Master-Key": API_KEY } : {};
-      const res = await fetch(BIN_URL, { headers, cache: "no-store" });
-      if (!res.ok) return [];
-      const js = await res.json();
-      let hits = js?.record ?? js;
-      if (hits && hits.record) hits = hits.record;
-      return Array.isArray(hits) ? hits : [];
-    } catch (err) {
-      console.error("[MTurk→JSONBin] ❌ Could not fetch existing bin:", err);
-      return [];
+    // --- 📋 Google Sheet User Mapping ---
+    const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1oyR6URA8qOmg6Zo90Df4w1h5lckOmjVC_9JrE-AXouM/export?format=csv&gid=0";
+    const workerToUser = {};
+
+    async function loadUserMap() {
+      try {
+        const res = await fetch(SHEET_CSV, { cache: "no-store" });
+        const text = await res.text();
+        const lines = text.split(/\\r?\\n/).filter(l => l.trim().length > 0);
+
+        const sep = (lines[0].includes(";") && !lines[0].includes(",")) ? ";" : ",";
+        const headers = lines[0].split(sep).map(h => h.trim().toLowerCase());
+        const widIdx = headers.findIndex(h => h.replace(/\\s+/g, "") === "workerid");
+        const userIdx = headers.findIndex(h => h.replace(/\\s+/g, "") === "user");
+
+        if (widIdx === -1 || userIdx === -1) {
+          console.warn("⚠️ Missing workerid or user column in sheet header:", headers);
+          return;
+        }
+
+        for (let i = 1; i < lines.length; i++) {
+          const parts = lines[i].split(sep).map(v => v.trim());
+          const wid = parts[widIdx]?.replace(/^\\uFEFF/, "").trim();
+          const usr = parts[userIdx]?.trim();
+          if (/^A[A-Z0-9]{12,}$/.test(wid)) workerToUser[wid] = usr || "";
+        }
+
+        console.log("✅ Loaded user map:", Object.keys(workerToUser).length, "entries");
+      } catch (err) {
+        console.error("❌ Failed to load user map:", err);
+      }
     }
-  }
 
-  async function saveBin(records, logAction = "Updated") {
-    GM_xmlhttpRequest({
-      method: "PUT",
-      url: BIN_URL,
-      headers: {
-        "Content-Type": "application/json",
-        "X-Master-Key": API_KEY
-      },
-      data: JSON.stringify({ record: records }),
-      onload: r => console.log(`[MTurk→JSONBin] ✅ ${logAction}. Total: ${records.length}`),
-      onerror: e => console.error("[MTurk→JSONBin] ❌ Error:", e)
-    });
-  }
-
-  async function saveHit(newHit) {
-    const existing = await fetchExistingBin();
-    if (!Array.isArray(existing)) return;
-
-    // remove old copy of this assignmentId
-    let merged = existing.filter(r => r.assignmentId !== newHit.assignmentId);
-
-    // add fresh
-    merged.push(newHit);
-
-    await saveBin(merged, `Saved HIT ${newHit.assignmentId}`);
-  }
-
-  async function removeHit(assignmentId, reason = 'Removed') {
-    const existing = await fetchExistingBin();
-    if (!Array.isArray(existing)) return;
-
-    const filtered = existing.filter(r => r.assignmentId !== assignmentId);
-    await saveBin(filtered, `${reason}: ${assignmentId}`);
-    console.log(`[MTurk→JSONBin] 🗑️ ${reason} HIT: ${assignmentId}`);
-  }
-
-  async function cleanupExpired() {
-    const existing = await fetchExistingBin();
-    if (!Array.isArray(existing)) return;
-
-    const now = Date.now();
-    const stillValid = existing.filter(r => {
-      if (!r.timeRemainingSeconds || !r.acceptedAt) return true;
-      const acceptedAt = new Date(r.acceptedAt).getTime();
-      const expiresAt = acceptedAt + r.timeRemainingSeconds * 1000;
-      return expiresAt > now;
-    });
-
-    if (stillValid.length !== existing.length) {
-      console.log(`[MTurk→JSONBin] 🧹 Cleaned up ${existing.length - stillValid.length} expired HIT(s)`);
-      await saveBin(stillValid, 'Cleanup expired');
+    // --- 🧩 Helpers ---
+    function getWorkerId() {
+      const el = document.querySelector(".me-bar span.text-uppercase span");
+      if (!el) return null;
+      const txt = el.textContent.replace(/^Copied/i, "").trim();
+      const match = txt.match(/A[A-Z0-9]{12,}/);
+      return match ? match[0] : txt;
     }
-  }
 
-  function parseReward() {
-    // Prefer modal props if present
-    try {
-      const rewardNode = document.querySelector("[data-react-class*='ShowModal']");
-      if (rewardNode) {
-        const props = JSON.parse(rewardNode.getAttribute('data-react-props'));
-        const val = props?.modalOptions?.monetaryReward?.amountInDollars;
-        if (typeof val === 'number') return val; // numeric
+    function parseReward() {
+      let reward = 0.0;
+      const label = Array.from(document.querySelectorAll(".detail-bar-label"))
+        .find(el => el.textContent.includes("Reward"));
+      if (label) {
+        const valEl = label.nextElementSibling;
+        if (valEl) {
+          const match = valEl.innerText.match(/\\$([0-9.]+)/);
+          if (match) reward = parseFloat(match[1]);
+        }
       }
-    } catch (e) { /* ignore */ }
+      return reward;
+    }
 
-    // Fallback: find text that looks like $X.XX and return numeric
-    try {
-      const el = Array.from(document.querySelectorAll('.detail-bar-value')).find(e => /\$?\d/.test(e.innerText));
-      if (el) {
-        const txt = el.innerText.trim();
-        const num = parseFloat(txt.replace(/[^0-9.]/g, ''));
-        if (!Number.isNaN(num)) return num;
-      }
-    } catch (e) { /* ignore */ }
+    function collectTaskHit() {
+      const assignmentId = new URLSearchParams(window.location.search).get("assignment_id");
+      if (!assignmentId) return null;
 
-    return 0;
-  }
-
-  function findWorkerId() {
-    // Header first
-    const headerId = document.querySelector('.me-bar .text-uppercase span')?.innerText.trim() || '';
-    if (headerId) return headerId.replace(/^COPIED\s+/i, '');
-
-    // Fallback to iframe src or forms
-    const iframeSrc = document.querySelector('iframe')?.src || '';
-    const m = iframeSrc.match(/workerId=([^&]+)/);
-    if (m) return m[1];
-
-    // fallback to query param
-    const wqp = new URLSearchParams(window.location.search).get('workerId');
-    if (wqp) return wqp;
-
-    return '';
-  }
-
-  function scrapeHitInfo() {
-    try {
-      const requester = document.querySelector(".detail-bar-value a[href*='/requesters']")?.innerText.trim() || 'Unknown';
-      const title = document.querySelector('.task-project-title')?.innerText.trim() || document.title;
-      const reward = parseReward();
-
-      const workerId = findWorkerId();
-      const username = document.querySelector(".me-bar a[href='/account']")?.innerText.trim() || '';
-      const assignmentId = new URLSearchParams(window.location.search).get('assignment_id') || `task-${Date.now()}`;
-      const url = window.location.href;
-
-      // Time remaining in seconds if visible
-      let timeRemainingSeconds = null;
-      const timer = document.querySelector("[data-react-class*='CompletionTimer']");
-      if (timer?.getAttribute('data-react-props')) {
-        try {
-          const props = JSON.parse(timer.getAttribute('data-react-props'));
-          timeRemainingSeconds = props.timeRemainingInSeconds;
-        } catch (e) { /* ignore */ }
-      }
+      const workerId = getWorkerId();
+      const user = workerToUser[workerId] || "Unknown";
 
       return {
         assignmentId,
-        requester,
-        title,
-        reward, // numeric
         workerId,
-        username,
+        user,
+        requester: document.querySelector(".detail-bar-value a[href*='/requesters/']")?.innerText || "",
+        title: document.querySelector(".task-project-title")?.innerText || document.title,
+        reward: parseReward(),
         acceptedAt: new Date().toISOString(),
-        url,
-        timeRemainingSeconds,
-        updatedAt: new Date().toISOString()
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),  // 🔥 TTL field — Firestore auto-deletes after 10m
+        url: window.location.href,
+        status: "active"
       };
-    } catch (err) {
-      console.error('[MTurk→JSONBin] ❌ Scrape failed:', err);
-      return null;
     }
-  }
 
- 
-  async function runOnce() {
-    // Save current HIT
-    const hit = scrapeHitInfo();
-    if (hit && hit.assignmentId) {
-      await saveHit(hit);
-
-      // schedule prune for this hit if timeRemainingSeconds present
-      if (hit.timeRemainingSeconds) {
-        setTimeout(() => removeHit(hit.assignmentId, 'Expired (timer)'), hit.timeRemainingSeconds * 1000);
-      }
-
-      // watch forms for submit/return
-      const forms = document.querySelectorAll("form[action*='/submit'], form[action*='/return'], form[action*='/tasks/']");
-      forms.forEach(f => {
-        f.addEventListener('submit', () => {
-          removeHit(hit.assignmentId, 'Submitted/Returned');
-        });
-      });
+    // --- 🚀 Post Task (no deleteDoc needed) ---
+    async function postTask() {
+      const hit = collectTaskHit();
+      if (!hit) return;
+      await setDoc(doc(db, "hits", hit.assignmentId), hit, { merge: true });
+      console.log("✅ Posted HIT:", hit.assignmentId, "User:", hit.user, "Reward:", hit.reward, "| TTL set for 10m");
     }
-  }
 
-  // initial cleanup on load
-  window.addEventListener('load', () => {
-    cleanupExpired();
-    runOnce();
-    checkCaptchaOnPage();
-  });
-
-  // periodic save (keeps record fresh)
-  setInterval(runOnce, SAVE_INTERVAL_MS);
-
-  // background cleanup every 5 minutes
-  setInterval(cleanupExpired, BACKGROUND_CLEANUP_MS);
-
-  // captcha periodic check
-  setInterval(checkCaptchaOnPage, CAPTCHA_CHECK_MS);
-
+    // --- 🏁 Initialize ---
+    window.addEventListener("load", async () => {
+      await loadUserMap();
+      await postTask();
+    });
+  `;
+  document.head.appendChild(s);
 })();
