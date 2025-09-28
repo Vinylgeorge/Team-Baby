@@ -6,23 +6,69 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import {
+      getFirestore, collection, onSnapshot,
+      doc, setDoc, deleteDoc, serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     // --- Firebase Config ---
     const firebaseConfig = {
-  apiKey: "AIzaSyD_FH-65A526z8g9iGhSYKulS4yiv5e6Ys",
-  authDomain: "mturk-monitor.firebaseapp.com",
-  projectId: "mturk-monitor",
-  storageBucket: "mturk-monitor.firebasestorage.app",
-  messagingSenderId: "285174080989",
-  appId: "1:285174080989:web:e1f607e6a5f80463278234"
-};
+      apiKey: "AIzaSyD_FH-65A526z8g9iGhSYKulS4yiv5e6Ys",
+      authDomain: "mturk-monitor.firebaseapp.com",
+      projectId: "mturk-monitor",
+      storageBucket: "mturk-monitor.firebasestorage.app",
+      messagingSenderId: "285174080989",
+      appId: "1:285174080989:web:e1f607e6a5f80463278234"
+    };
 
     const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
+    const db  = getFirestore(app);
 
+    // ----------------------------
+    // Presence (Firestore-only)
+    // ----------------------------
+    const ROOM = "index";                   // a single room for this page
+    const HEARTBEAT_MS = 60_000;            // write once per minute
+    const STALE_MS     = 90_000;            // consider offline if >90s inactive
+
+    const onlineEl = document.querySelector("#onlineCount");
+    const presenceCol = collection(db, `rooms/${ROOM}/presence`);
+    const sid = (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
+    const meRef = doc(presenceCol, sid);
+
+    async function startPresence() {
+      // create / refresh my presence doc
+      setDoc(meRef, { since: serverTimestamp(), lastActive: serverTimestamp() }, { merge: true }).catch(()=>{});
+      // heartbeat
+      const hb = setInterval(() => {
+        setDoc(meRef, { lastActive: serverTimestamp() }, { merge: true }).catch(()=>{});
+      }, HEARTBEAT_MS);
+
+      // clean up on unload (best effort)
+      window.addEventListener("beforeunload", () => {
+        clearInterval(hb);
+        deleteDoc(meRef).catch(()=>{});
+      });
+
+      // live count of viewers active in last 90s
+      onSnapshot(presenceCol, (snap) => {
+        const now = Date.now();
+        let count = 0;
+        snap.forEach(d => {
+          const t = d.data()?.lastActive;
+          const ms = t?.toMillis?.() ?? (t ? Date.parse(t) : 0);
+          if (ms && (now - ms) <= STALE_MS) count++;
+        });
+        if (onlineEl) onlineEl.textContent = `${count} online`;
+      });
+    }
+    startPresence();
+
+    // ----------------------------
+    // Your existing HITs listener
+    // ----------------------------
     const tableBody = document.querySelector("#hits-body");
-    const soundUrl = "https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3";
+    const soundUrl  = "https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3";
     let knownIds = new Set();
 
     function playSound() {
@@ -48,7 +94,7 @@
       }
     }
 
-    // --- Real-time Firestore updates ---
+    // Real-time Firestore updates (hits)
     onSnapshot(collection(db, "hits"), (snapshot) => {
       const hits = [];
       const newIds = new Set();
@@ -56,7 +102,7 @@
       snapshot.forEach(doc => {
         const data = doc.data();
         hits.push(data);
-        newIds.add(data.assignmentId);
+        if (data.assignmentId) newIds.add(data.assignmentId);
       });
 
       // detect new additions
@@ -78,10 +124,24 @@
       color: #111827;
       padding: 24px;
     }
+    .titlebar {
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      margin-bottom:20px;
+    }
     h1 {
-      text-align: center;
       color: #0f62fe;
-      margin-bottom: 20px;
+      margin: 0;
+    }
+    #onlineCount {
+      font-size: 14px;
+      color: #6b7280;
+      background: #eef2ff;
+      border: 1px solid #e5e7eb;
+      border-radius: 999px;
+      padding: 4px 10px;
     }
     table {
       width: 100%;
@@ -113,7 +173,11 @@
   </style>
 </head>
 <body>
-  <h1>🔥 MTurk Accepted HITs (Live Monitor)</h1>
+  <div class="titlebar">
+    <h1>🔥 MTurk Accepted HITs (Live Monitor)</h1>
+    <span id="onlineCount">0 online</span>
+  </div>
+
   <table>
     <thead>
       <tr>
