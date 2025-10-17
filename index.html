@@ -25,32 +25,28 @@
     const db  = getFirestore(app);
 
     // ----------------------------
-    // Presence (Firestore-only)
+    // Presence (who’s online)
     // ----------------------------
-    const ROOM = "index";                   // a single room for this page
-    const HEARTBEAT_MS = 60_000;            // write once per minute
-    const STALE_MS     = 90_000;            // consider offline if >90s inactive
+    const ROOM = "index";
+    const HEARTBEAT_MS = 60_000;
+    const STALE_MS     = 90_000;
 
     const onlineEl = document.querySelector("#onlineCount");
     const presenceCol = collection(db, `rooms/${ROOM}/presence`);
-    const sid = (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2));
+    const sid = crypto.randomUUID?.() ?? Math.random().toString(36).slice(2);
     const meRef = doc(presenceCol, sid);
 
     async function startPresence() {
-      // create / refresh my presence doc
       setDoc(meRef, { since: serverTimestamp(), lastActive: serverTimestamp() }, { merge: true }).catch(()=>{});
-      // heartbeat
       const hb = setInterval(() => {
         setDoc(meRef, { lastActive: serverTimestamp() }, { merge: true }).catch(()=>{});
       }, HEARTBEAT_MS);
 
-      // clean up on unload (best effort)
       window.addEventListener("beforeunload", () => {
         clearInterval(hb);
         deleteDoc(meRef).catch(()=>{});
       });
 
-      // live count of viewers active in last 90s
       onSnapshot(presenceCol, (snap) => {
         const now = Date.now();
         let count = 0;
@@ -65,7 +61,7 @@
     startPresence();
 
     // ----------------------------
-    // Your existing HITs listener
+    // HITs live listener
     // ----------------------------
     const tableBody = document.querySelector("#hits-body");
     const soundUrl  = "https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3";
@@ -94,21 +90,88 @@
       }
     }
 
-    // Real-time Firestore updates (hits)
+    // ----------------------------
+    // 🔔 Desktop notifications setup
+    // ----------------------------
+    const titlebar = document.querySelector(".titlebar");
+    const notifBtn = document.createElement("button");
+    notifBtn.id = "enableNotif";
+    notifBtn.textContent = "Enable notifications";
+    Object.assign(notifBtn.style, {
+      padding: "6px 10px",
+      borderRadius: "999px",
+      border: "1px solid #d1d5db",
+      background: "#ffffff",
+      cursor: "pointer",
+      fontSize: "12px"
+    });
+    titlebar.appendChild(notifBtn);
+
+    function updateNotifButtonVisibility() {
+      if (!("Notification" in window)) {
+        notifBtn.style.display = "none";
+        return;
+      }
+      notifBtn.style.display = Notification.permission === "granted" ? "none" : "inline-block";
+    }
+    updateNotifButtonVisibility();
+
+    notifBtn.addEventListener("click", async () => {
+      if (!("Notification" in window)) return;
+      try {
+        await Notification.requestPermission();
+      } catch {}
+      updateNotifButtonVisibility();
+    });
+
+    const notifiedIds = new Set();
+    function notifyNewHit(h) {
+      if (!("Notification" in window)) return;
+      if (Notification.permission !== "granted") return;
+      if (!h?.assignmentId || notifiedIds.has(h.assignmentId)) return;
+
+      const title = `New HIT • ${h.requester || "Requester"}`;
+      const body  = `${h.title || "Untitled"}\nReward: $${h.reward || 0} • ${h.user || h.workerId || ""}`;
+      const n = new Notification(title, {
+        body,
+        tag: h.assignmentId,
+        renotify: false,
+        silent: true
+      });
+      n.onclick = () => { window.focus(); try { n.close(); } catch {}; };
+
+      notifiedIds.add(h.assignmentId);
+      setTimeout(() => notifiedIds.delete(h.assignmentId), 120_000);
+      setTimeout(() => { try { n.close(); } catch {}; }, 8000);
+    }
+
+    // ----------------------------
+    // Real-time Firestore updates
+    // ----------------------------
     onSnapshot(collection(db, "hits"), (snapshot) => {
       const hits = [];
       const newIds = new Set();
+      const hitsById = new Map();
 
-      snapshot.forEach(doc => {
-        const data = doc.data();
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
         hits.push(data);
-        if (data.assignmentId) newIds.add(data.assignmentId);
+        if (data.assignmentId) {
+          newIds.add(data.assignmentId);
+          hitsById.set(data.assignmentId, data);
+        }
       });
 
-      // detect new additions
+      // detect newly added HITs
       if (knownIds.size > 0) {
         const added = Array.from(newIds).filter(id => !knownIds.has(id));
-        if (added.length > 0) playSound();
+        if (added.length > 0) {
+          playSound();
+          for (const id of added) {
+            const h = hitsById.get(id);
+            if (h) notifyNewHit(h);
+          }
+        }
       }
 
       knownIds = newIds;
@@ -191,8 +254,9 @@
     </thead>
     <tbody id="hits-body"></tbody>
   </table>
+
   <div class="footer">
-    Real-time updates • Plays sound when new HIT arrives
+    Real-time updates • Plays sound & shows desktop notifications when new HIT arrives
   </div>
 </body>
 </html>
