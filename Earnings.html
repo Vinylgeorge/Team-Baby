@@ -196,9 +196,10 @@ async function buildData() {
 
   const finalQualifiedTotal = sumQualifiedCurrent + sumTransfersAfter5;
 
- 
+  totalQEl.innerHTML =
+    `Qualified (current ≥ $8 + transfers after 5th): <b>$${finalQualifiedTotal.toFixed(2)}</b> (${QUALIFIED_DATA.length} users)`;
 
- 
+  
 
   renderQualifiedTable();
   initTransferredFilterAndTable();
