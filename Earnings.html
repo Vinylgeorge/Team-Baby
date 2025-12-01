@@ -68,16 +68,35 @@ function parseMDY(dateStr) {
   return { m, d, y };
 }
 
-function isThisMonthAfterFifth(dateStr) {
-  const parsed = parseMDY(dateStr);
-  if (!parsed) return false;
+function isInLastMonthWindow(dateStr) {
+  const p = parseMDY(dateStr);
+  if (!p) return false;
+
   const now = new Date();
-  return (
-    parsed.m === (now.getMonth() + 1) &&
-    parsed.y === now.getFullYear() &&
-    parsed.d > 5
-  );
+  const thisMonth = now.getMonth() + 1;
+  const thisYear  = now.getFullYear();
+
+  // Determine last month + year rollover
+  let lastMonth = thisMonth - 1;
+  let lastMonthYear = thisYear;
+  if (lastMonth === 0) {
+    lastMonth = 12;
+    lastMonthYear = thisYear - 1;
+  }
+
+  // Case 1: last month, day >= 6
+  if (p.m === lastMonth && p.y === lastMonthYear && p.d >= 6) {
+    return true;
+  }
+
+  // Case 2: this month, day <= 5
+  if (p.m === thisMonth && p.y === thisYear && p.d <= 5) {
+    return true;
+  }
+
+  return false;
 }
+
 
 /* ======================================================
    MAIN CSV (team / who to track)
