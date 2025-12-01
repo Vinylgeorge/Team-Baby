@@ -144,7 +144,7 @@ function updateCountdown() {
   if (!nextSyncEl) return;
   const now  = new Date();
   const next = new Date();
-  next.setHours(0,0,0,1);
+  next.setHours(24,0,0,0);
 
   const diff = next - now;
   const h = Math.floor(diff / (1000*60*60));
