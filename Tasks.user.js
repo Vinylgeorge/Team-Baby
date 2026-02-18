@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name        MTurk Tasks
+// @name        MTurk Task → Firestore + User Mapping (Only Today+Yesterday, Safe Dates)
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant       none
-// @version     1.3
+// @version     1.5
 // @updateURL    https://github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
 // @downloadURL  https://github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
 // ==/UserScript==
@@ -15,14 +15,9 @@
   s.type = "module";
   s.textContent = `
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import {
-      getFirestore,
-      setDoc,
-      doc,
-      Timestamp
-    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getFirestore, setDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    const firebaseConfig = {
+        const firebaseConfig = {
   apiKey: "AIzaSyD_FH-65A526z8g9iGhSYKulS4yiv5e6Ys",
   authDomain: "mturk-monitor.firebaseapp.com",
   projectId: "mturk-monitor",
@@ -30,10 +25,10 @@
   messagingSenderId: "285174080989",
   appId: "1:285174080989:web:e1f607e6a5f80463278234"
 };
+
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // --- 📋 Google Sheet User Mapping ---
     const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1ce5o_hv7I8T76qMMWfuWQGMDOtjUJPX46_qqLneorxs/export?format=csv&gid=0";
     const workerToUser = {};
 
@@ -49,24 +44,21 @@
         const userIdx = headers.findIndex(h => h.replace(/\\s+/g, "") === "user");
 
         if (widIdx === -1 || userIdx === -1) {
-          console.warn("⚠️ Missing workerid or user column in sheet header:", headers);
+          console.warn("Missing workerid or user column in sheet header:", headers);
           return;
         }
 
-         for (let i = 1; i < lines.length; i++) {
+        for (let i = 1; i < lines.length; i++) {
           const parts = lines[i].split(sep).map(v => v.trim());
           const wid = parts[widIdx]?.replace(/^\\uFEFF/, "").trim();
           const usr = parts[userIdx]?.trim();
           if (/^A[A-Z0-9]{12,}$/.test(wid)) workerToUser[wid] = usr || "";
         }
-
-        console.log("✅ Loaded user map:", Object.keys(workerToUser).length, "entries");
       } catch (err) {
-        console.error("❌ Failed to load user map:", err);
+        console.error("Failed to load user map:", err);
       }
     }
 
-    // --- 🧩 Helpers ---
     function getWorkerId() {
       const el = document.querySelector(".me-bar span.text-uppercase span");
       if (!el) return null;
@@ -89,31 +81,26 @@
       return reward;
     }
 
-    // Start of yesterday in LOCAL TIME (client machine time)
-    function startOfYesterdayDate() {
+    function startOfYesterdayMs() {
       const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const startOfYesterday = new Date(startOfToday);
-      startOfYesterday.setDate(startOfToday.getDate() - 1);
-      return startOfYesterday;
+      const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const startYesterday = new Date(startToday);
+      startYesterday.setDate(startToday.getDate() - 1);
+      return startYesterday.getTime();
     }
 
     function collectTaskHit() {
       const assignmentId = new URLSearchParams(window.location.search).get("assignment_id");
       if (!assignmentId) return null;
 
+      const nowMs = Date.now();
+      const cutoffMs = startOfYesterdayMs();
+
+      // Only Today + Yesterday
+      if (nowMs < cutoffMs) return null;
+
       const workerId = getWorkerId();
       const user = workerToUser[workerId] || "Unknown";
-
-      const acceptedAt = Timestamp.now();
-      const startYesterday = startOfYesterdayDate();
-      const isTodayOrYesterday = acceptedAt.toDate().getTime() >= startYesterday.getTime();
-
-      // ✅ Only post if acceptedAt is within Today+Yesterday window
-      if (!isTodayOrYesterday) {
-        console.log("⏭️ Skipped posting (not Today/Yesterday):", assignmentId);
-        return null;
-      }
 
       return {
         assignmentId,
@@ -122,22 +109,23 @@
         requester: document.querySelector(".detail-bar-value a[href*='/requesters/']")?.innerText || "",
         title: document.querySelector(".task-project-title")?.innerText || document.title,
         reward: parseReward(),
-        acceptedAt, // ✅ Firestore Timestamp (best for querying)
-        // NOTE: TTL removed on purpose; you said TTL is not working for you.
+
+        // ✅ SAFE date fields
+        acceptedAtMs: nowMs,
+        acceptedAtISO: new Date(nowMs).toISOString(),
+
         url: window.location.href,
         status: "active"
       };
     }
 
-    // --- 🚀 Post Task ---
     async function postTask() {
       const hit = collectTaskHit();
       if (!hit) return;
       await setDoc(doc(db, "hits", hit.assignmentId), hit, { merge: true });
-      console.log("✅ Posted HIT:", hit.assignmentId, "User:", hit.user, "Reward:", hit.reward, "| Today+Yesterday only");
+      console.log("Posted HIT:", hit.assignmentId, "User:", hit.user, "Reward:", hit.reward);
     }
 
-    // --- 🏁 Initialize ---
     window.addEventListener("load", async () => {
       await loadUserMap();
       await postTask();
