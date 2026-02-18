@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name        MTurk Task → Firestore + User Mapping (Only Today+Yesterday, Safe Dates)
+// @name        MTurk Task → Firestore + User Mapping (TTL Auto-Expire 10m)
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant       none
-// @version     1.5
+// @version     1.6
 // @updateURL    https://github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
 // @downloadURL  https://github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
 // ==/UserScript==
@@ -17,7 +17,8 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, setDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-        const firebaseConfig = {
+    // --- 🔥 Firebase Config ---
+    const firebaseConfig = {
   apiKey: "AIzaSyD_FH-65A526z8g9iGhSYKulS4yiv5e6Ys",
   authDomain: "mturk-monitor.firebaseapp.com",
   projectId: "mturk-monitor",
@@ -29,6 +30,7 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
+    // --- 📋 Google Sheet User Mapping ---
     const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1ce5o_hv7I8T76qMMWfuWQGMDOtjUJPX46_qqLneorxs/export?format=csv&gid=0";
     const workerToUser = {};
 
@@ -44,7 +46,7 @@
         const userIdx = headers.findIndex(h => h.replace(/\\s+/g, "") === "user");
 
         if (widIdx === -1 || userIdx === -1) {
-          console.warn("Missing workerid or user column in sheet header:", headers);
+          console.warn("⚠️ Missing workerid or user column in sheet header:", headers);
           return;
         }
 
@@ -54,11 +56,14 @@
           const usr = parts[userIdx]?.trim();
           if (/^A[A-Z0-9]{12,}$/.test(wid)) workerToUser[wid] = usr || "";
         }
+
+        console.log("✅ Loaded user map:", Object.keys(workerToUser).length, "entries");
       } catch (err) {
-        console.error("Failed to load user map:", err);
+        console.error("❌ Failed to load user map:", err);
       }
     }
 
+    // --- 🧩 Helpers ---
     function getWorkerId() {
       const el = document.querySelector(".me-bar span.text-uppercase span");
       if (!el) return null;
@@ -70,34 +75,20 @@
     function parseReward() {
       let reward = 0.0;
       const label = Array.from(document.querySelectorAll(".detail-bar-label"))
-        .find(el => (el.textContent || "").includes("Reward"));
+        .find(el => el.textContent.includes("Reward"));
       if (label) {
         const valEl = label.nextElementSibling;
         if (valEl) {
-          const match = (valEl.innerText || "").match(/\\$([0-9.]+)/);
+          const match = valEl.innerText.match(/\\$([0-9.]+)/);
           if (match) reward = parseFloat(match[1]);
         }
       }
       return reward;
     }
 
-    function startOfYesterdayMs() {
-      const now = new Date();
-      const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const startYesterday = new Date(startToday);
-      startYesterday.setDate(startToday.getDate() - 1);
-      return startYesterday.getTime();
-    }
-
     function collectTaskHit() {
       const assignmentId = new URLSearchParams(window.location.search).get("assignment_id");
       if (!assignmentId) return null;
-
-      const nowMs = Date.now();
-      const cutoffMs = startOfYesterdayMs();
-
-      // Only Today + Yesterday
-      if (nowMs < cutoffMs) return null;
 
       const workerId = getWorkerId();
       const user = workerToUser[workerId] || "Unknown";
@@ -109,23 +100,22 @@
         requester: document.querySelector(".detail-bar-value a[href*='/requesters/']")?.innerText || "",
         title: document.querySelector(".task-project-title")?.innerText || document.title,
         reward: parseReward(),
-
-        // ✅ SAFE date fields
-        acceptedAtMs: nowMs,
-        acceptedAtISO: new Date(nowMs).toISOString(),
-
+        acceptedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),  // 🔥 TTL field — Firestore auto-deletes after 10m
         url: window.location.href,
         status: "active"
       };
     }
 
+    // --- 🚀 Post Task (no deleteDoc needed) ---
     async function postTask() {
       const hit = collectTaskHit();
       if (!hit) return;
       await setDoc(doc(db, "hits", hit.assignmentId), hit, { merge: true });
-      console.log("Posted HIT:", hit.assignmentId, "User:", hit.user, "Reward:", hit.reward);
+      console.log("✅ Posted HIT:", hit.assignmentId, "User:", hit.user, "Reward:", hit.reward, "| TTL set for 10m");
     }
 
+    // --- 🏁 Initialize ---
     window.addEventListener("load", async () => {
       await loadUserMap();
       await postTask();
