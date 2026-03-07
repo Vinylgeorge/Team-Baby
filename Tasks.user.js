@@ -3,7 +3,7 @@
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant       none
-// @version     1.7
+// @version     1.8
 // @updateURL    https://github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
 // @downloadURL  https://github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
 // ==/UserScript==
@@ -33,6 +33,7 @@
     // --- 📋 Google Sheet User Mapping ---
     const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1RU_hAAxyza7cxpyce6-ePCuUQh52VmW9EgcTqli1oA8/export?format=csv&gid=0";
     const workerToUser = {};
+    const userToWorkers = {};
     const TIMER_STATE_PREFIX = "mturk_hit_timer_state::";
 
     function parseCsvLine(line) {
@@ -82,7 +83,14 @@
           const parts = parseCsvLine(lines[i]).map(v => String(v || "").trim());
           const wid = parts[widIdx]?.replace(/^\\uFEFF/, "").trim().toUpperCase();
           const usr = parts[userIdx]?.trim();
-          if (/^A[A-Z0-9]{12,}$/.test(wid)) workerToUser[wid] = usr || "";
+          if (/^A[A-Z0-9]{12,}$/.test(wid)) {
+            workerToUser[wid] = usr || "";
+            const userKey = String(usr || "").trim();
+            if (userKey) {
+              if (!userToWorkers[userKey]) userToWorkers[userKey] = [];
+              userToWorkers[userKey].push(wid);
+            }
+          }
         }
 
         console.log("✅ Loaded user map:", Object.keys(workerToUser).length, "entries");
@@ -188,6 +196,35 @@
       return sent;
     }
 
+    async function sendLiveMessageToUserNumber(userNumber, text, hit) {
+      const targetKey = String(userNumber || "").trim();
+      if (!targetKey) throw new Error("User number is required.");
+      const fromId = hit.workerId || "UNKNOWN";
+      const fromName = workerToUser[fromId] || hit.user || fromId;
+      const targetWorkers = Array.from(new Set(userToWorkers[targetKey] || [])).filter(id => id && id !== fromId);
+      if (!targetWorkers.length) throw new Error("No worker found for user number: " + targetKey);
+
+      let sent = 0;
+      for (const toId of targetWorkers) {
+        const threadId = safeThreadId(fromId, toId);
+        await addDoc(collection(db, "threads", threadId, "messages"), {
+          fromId: fromId,
+          fromName: fromName,
+          toId: toId,
+          text: text,
+          createdAt: serverTimestamp()
+        });
+        await setDoc(doc(db, "threads", threadId), {
+          users: [fromId, toId],
+          updatedAt: serverTimestamp(),
+          lastText: text.slice(0, 140),
+          lastFrom: fromId
+        }, { merge: true });
+        sent++;
+      }
+      return sent;
+    }
+
     function getTimerStateKey(assignmentId) {
       return TIMER_STATE_PREFIX + assignmentId;
     }
@@ -226,6 +263,11 @@
           "Elapsed: " + Math.round(elapsedSec) + "s of " + Math.round(maxSec) + "s (" + pct + "%)" +
         "</div>" +
         "<textarea id='ab2-alert-msg' style='width:100%;height:90px;border-radius:8px;border:1px solid #475569;background:#020617;color:#e2e8f0;padding:8px;'>HIT timer alert: Assignment " + hit.assignmentId + " reached " + pct + "% of max time.</textarea>" +
+        "<div style='margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;'>" +
+          "<label style='font-size:12px;'>User number:</label>" +
+          "<input id='ab2-target-user' type='text' placeholder='e.g. 226' style='width:140px;border-radius:8px;border:1px solid #475569;background:#020617;color:#e2e8f0;padding:8px;' />" +
+          "<button id='ab2-sendone-btn' style='padding:8px 12px;border:0;border-radius:8px;background:#0ea5e9;color:#fff;cursor:pointer;'>Send to Specific User</button>" +
+        "</div>" +
         "<div style='display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;'>" +
           "<button id='ab2-snooze-btn' style='padding:8px 12px;border:0;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer;'>Snooze (+10%)</button>" +
           "<button id='ab2-ignore-btn' style='padding:8px 12px;border:0;border-radius:8px;background:#dc2626;color:#fff;cursor:pointer;'>Ignore</button>" +
@@ -238,18 +280,44 @@
       document.body.appendChild(overlay);
 
       const statusEl = box.querySelector("#ab2-alert-status");
+      let dialogClosed = false;
+      let autoCloseTimer = null;
+
+      function closeDialogForCurrentAlertOnly() {
+        if (dialogClosed) return;
+        dialogClosed = true;
+        state.nextThresholdPct = Math.min((state.nextThresholdPct || 0.5) + 0.1, 5);
+        state.dialogOpen = false;
+        saveTimerState(hit.assignmentId, state);
+        if (autoCloseTimer) {
+          clearTimeout(autoCloseTimer);
+          autoCloseTimer = null;
+        }
+        overlay.remove();
+      }
+
+      function closeDialogOnly() {
+        if (dialogClosed) return;
+        dialogClosed = true;
+        state.dialogOpen = false;
+        saveTimerState(hit.assignmentId, state);
+        if (autoCloseTimer) {
+          clearTimeout(autoCloseTimer);
+          autoCloseTimer = null;
+        }
+        overlay.remove();
+      }
+
       box.querySelector("#ab2-snooze-btn").onclick = function () {
         onSnooze();
-        overlay.remove();
+        closeDialogOnly();
       };
       box.querySelector("#ab2-ignore-btn").onclick = function () {
         onIgnore();
-        overlay.remove();
+        closeDialogOnly();
       };
       box.querySelector("#ab2-close-btn").onclick = function () {
-        state.dialogOpen = false;
-        saveTimerState(hit.assignmentId, state);
-        overlay.remove();
+        closeDialogForCurrentAlertOnly();
       };
       box.querySelector("#ab2-sendall-btn").onclick = async function () {
         try {
@@ -262,6 +330,22 @@
           statusEl.textContent = "Send failed: " + (e && e.message ? e.message : e);
         }
       };
+      box.querySelector("#ab2-sendone-btn").onclick = async function () {
+        try {
+          const txt = (box.querySelector("#ab2-alert-msg").value || "").trim();
+          const userNo = (box.querySelector("#ab2-target-user").value || "").trim();
+          if (!txt) return;
+          statusEl.textContent = "Sending to user " + userNo + "...";
+          const n = await sendLiveMessageToUserNumber(userNo, txt, hit);
+          statusEl.textContent = "Sent to " + n + " user worker(s).";
+        } catch (e) {
+          statusEl.textContent = "Send failed: " + (e && e.message ? e.message : e);
+        }
+      };
+
+      autoCloseTimer = setTimeout(() => {
+        closeDialogForCurrentAlertOnly();
+      }, 10000);
     }
 
     function startTimeMonitor(hit) {
