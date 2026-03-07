@@ -3,7 +3,7 @@
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant       none
-// @version     1.8
+// @version     1.9
 // @updateURL    https://github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
 // @downloadURL  https://github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
 // ==/UserScript==
@@ -17,7 +17,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, setDoc, doc, addDoc, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    // --- 🔥 Firebase Config ---
+     // --- 🔥 Firebase Config ---
     const firebaseConfig = {
   apiKey: "AIzaSyD_FH-65A526z8g9iGhSYKulS4yiv5e6Ys",
   authDomain: "mturk-monitor.firebaseapp.com",
