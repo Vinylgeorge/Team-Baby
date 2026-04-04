@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name        MTurk Task → Firestore + User Mapping (TTL Auto-Expire 10m)
+// @name        MTurk Task ? Firestore + User Mapping (TTL Auto-Expire 10m)
 // @namespace   Violentmonkey Scripts
 // @match       https://worker.mturk.com/projects/*/tasks/*
 // @grant       none
-// @version     1.9
+// @version     3
 // @updateURL    https://github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
 // @downloadURL  https://github.com/Vinylgeorge/Team-Baby/raw/refs/heads/main/Tasks.user.js
 // ==/UserScript==
@@ -15,7 +15,7 @@
   s.type = "module";
   s.textContent = `
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, setDoc, doc, addDoc, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getFirestore, setDoc, doc, addDoc, collection, serverTimestamp, query, where, orderBy, getDocs, writeBatch, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
      // --- 🔥 Firebase Config ---
     const firebaseConfig = {
@@ -30,7 +30,63 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // --- 📋 Google Sheet User Mapping ---
+    /** Retention: reads only see recent hits; hourly cleanup deletes hits older than this window. */
+    const FIRESTORE_READ_WINDOW_MS = 24 * 60 * 60 * 1000;
+    /** How often to run Firestore deletion (stale hits). */
+    const FIRESTORE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
+    function getHitsReadCutoffIso() {
+      return new Date(Date.now() - FIRESTORE_READ_WINDOW_MS).toISOString();
+    }
+
+    /** Query hits collection: acceptedAt >= (now - 24h), newest first. Requires acceptedAt ISO string field. */
+    async function fetchHitsLast24Hours() {
+      const cutoffIso = getHitsReadCutoffIso();
+      const q = query(
+        collection(db, "hits"),
+        where("acceptedAt", ">=", cutoffIso),
+        orderBy("acceptedAt", "desc")
+      );
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    }
+
+    /** Delete hits with acceptedAt older than retention window (batched, max 500 per batch). */
+    async function deleteStaleHits() {
+      const cutoffIso = getHitsReadCutoffIso();
+      let total = 0;
+      while (true) {
+        const q = query(
+          collection(db, "hits"),
+          where("acceptedAt", "<", cutoffIso),
+          orderBy("acceptedAt", "asc"),
+          limit(500)
+        );
+        const snap = await getDocs(q);
+        if (snap.empty) break;
+        const batch = writeBatch(db);
+        snap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        total += snap.size;
+        if (snap.size < 500) break;
+      }
+      return total;
+    }
+
+    function startHourlyFirestoreCleanup() {
+      const run = async () => {
+        try {
+          const n = await deleteStaleHits();
+          if (n > 0) console.log("[AB2] Firestore cleanup: removed", n, "hit(s) older than 24h");
+        } catch (err) {
+          console.warn("[AB2] Firestore cleanup failed:", err);
+        }
+      };
+      setTimeout(run, 8000);
+      setInterval(run, FIRESTORE_CLEANUP_INTERVAL_MS);
+    }
+
+    // --- ?? Google Sheet User Mapping ---
     const SHEET_CSV = "https://docs.google.com/spreadsheets/d/1ce5o_hv7I8T76qMMWfuWQGMDOtjUJPX46_qqLneorxs/export?format=csv&gid=0";
     const workerToUser = {};
     const userToWorkers = {};
@@ -40,10 +96,10 @@
       const out = [];
       let cur = "";
       let inQuotes = false;
-      for (let i = 0; i < line.length; i++) {
+      for (let i = 0; i < line.length; i++) 
         const ch = line[i];
         if (ch === '"') {
-          if (inQuotes && line[i + 1] === '"') {
+          if (inQuotes && line[i + 1] === '"') 
             cur += '"';
             i++;
           } else {
@@ -75,7 +131,7 @@
         const userIdx = headers.findIndex(h => h === "user");
 
         if (widIdx === -1 || userIdx === -1) {
-          console.warn("⚠️ Missing workerid or user column in sheet header:", headers);
+          console.warn("?? Missing workerid or user column in sheet header:", headers);
           return;
         }
 
@@ -93,13 +149,13 @@
           }
         }
 
-        console.log("✅ Loaded user map:", Object.keys(workerToUser).length, "entries");
+        console.log("? Loaded user map:", Object.keys(workerToUser).length, "entries");
       } catch (err) {
-        console.error("❌ Failed to load user map:", err);
+        console.error("? Failed to load user map:", err);
       }
     }
 
-    // --- 🧩 Helpers ---
+    // --- ?? Helpers ---
     function getWorkerId() {
       const el = document.querySelector(".me-bar span.text-uppercase span");
       if (!el) return null;
@@ -161,7 +217,7 @@
         reward: parseReward(),
         timeAllottedSeconds: parseTimeAllottedSeconds(),
         acceptedAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),  // 🔥 TTL field — Firestore auto-deletes after 10m
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),  // ?? TTL field  Firestore auto-deletes after 10m
         url: window.location.href,
         status: "active"
       };
@@ -390,20 +446,33 @@
       setInterval(tick, 5000);
     }
 
-    // --- 🚀 Post Task (no deleteDoc needed) ---
+    // --- ?? Post Task ---
     async function postTask(hit) {
       if (!hit) hit = collectTaskHit();
       if (!hit) return;
       await setDoc(doc(db, "hits", hit.assignmentId), hit, { merge: true });
-      console.log("✅ Posted HIT:", hit.assignmentId, "User:", hit.user, "Reward:", hit.reward, "| TTL set for 10m");
+      console.log("? Posted HIT:", hit.assignmentId, "User:", hit.user, "Reward:", hit.reward, "| TTL set for 10m");
     }
 
-    // --- 🏁 Initialize ---
+    // --- ?? Initialize ---
     window.addEventListener("load", async () => {
       await loadUserMap();
       const hit = collectTaskHit();
       await postTask(hit);
       startTimeMonitor(hit);
+      try {
+        const recentHits = await fetchHitsLast24Hours();
+        console.log("[AB2] Firestore hits (last 24h only):", recentHits.length);
+      } catch (err) {
+        console.warn("[AB2] 24h hits read failed (create Firestore index if prompted):", err);
+      }
+      startHourlyFirestoreCleanup();
+    });
+
+    window.__AB2__ = Object.assign({}, window.__AB2__ || {}, {
+      fetchHitsLast24Hours,
+      getHitsReadCutoffIso,
+      deleteStaleHits
     });
   `;
   document.head.appendChild(s);
