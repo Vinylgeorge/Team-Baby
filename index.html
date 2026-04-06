@@ -1,252 +1,490 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>🔥 MTurk Accepted HITs – Live</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AB2 HIT Monitor - Server 2</title>
+<style>
+  :root {
+    --bg: #0a0f1a; --surface: #111827; --surface2: #1e293b;
+    --border: #334155; --text: #e2e8f0; --text-dim: #94a3b8;
+    --accent: #a855f7; --accent-hover: #9333ea;
+    --green: #22c55e; --green-bg: rgba(34,197,94,.12);
+    --red: #ef4444; --red-bg: rgba(239,68,68,.12);
+    --yellow: #eab308; --yellow-bg: rgba(234,179,8,.12);
+    --purple: #a855f7; --purple-bg: rgba(168,85,247,.15);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
 
-  <style>
-    body {
-      font-family: "Segoe UI", Roboto, sans-serif;
-      background: #f8fafc;
-      color: #111827;
-      padding: 24px;
-    }
-    h1 {
-      text-align: center;
-      color: #0f62fe;
-      margin-bottom: 10px;
-    }
-    #onlineCount {
-      display: block;
-      text-align: center;
-      color: #6b7280;
-      margin-bottom: 12px;
-      font-size: 14px;
-    }
-    #enableNotif {
-      display: block;
-      margin: 0 auto 20px auto;
-      padding: 6px 10px;
-      border-radius: 999px;
-      border: 1px solid #d1d5db;
-      background: #ffffff;
-      cursor: pointer;
-      font-size: 12px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      background: white;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    th, td {
-      padding: 10px 12px;
-      border-bottom: 1px solid #e5e7eb;
-      text-align: left;
-    }
-    th {
-      background: #0f62fe;
-      color: white;
-      font-weight: 600;
-    }
-    tr:hover {
-      background: #f1f5f9;
-    }
-    .footer {
-      text-align: center;
-      margin-top: 12px;
-      color: #6b7280;
-      font-size: 13px;
-    }
-  </style>
+  .header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px 24px; display: flex; align-items: center;
+    justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+  .header h1 { font-size: 1.25rem; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .header h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); animation: pulse 2s ease-in-out infinite; }
+  .header h1 .dot.offline { background: var(--red); animation: none; }
+  .header h1 .dot.connecting { background: var(--yellow); animation: pulse .6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.4 } }
+
+  .server-label {
+    background: var(--purple-bg); color: var(--purple);
+    padding: 4px 14px; border-radius: 6px;
+    font-size: .85rem; font-weight: 700;
+  }
+  .live-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--red); color: #fff; padding: 3px 10px; border-radius: 4px;
+    font-size: .7rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; animation: livePulse 1.5s ease-in-out infinite;
+  }
+  .live-tag .live-dot { width: 6px; height: 6px; border-radius: 50%; background: #fff; }
+  @keyframes livePulse { 0%,100% { opacity:1 } 50% { opacity:.6 } }
+  .live-tag.off { background: var(--border); animation: none; }
+
+  .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+  /* Layout: sidebar + main */
+  .layout { display: flex; min-height: calc(100vh - 60px); }
+  .sidebar {
+    width: 220px; min-width: 220px; background: var(--surface);
+    border-right: 1px solid var(--border); padding: 16px;
+    overflow-y: auto; max-height: calc(100vh - 60px);
+  }
+  .sidebar h3 { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); margin-bottom: 10px; }
+  .user-list { list-style: none; }
+  .user-list li {
+    padding: 6px 10px; border-radius: 6px; font-size: .82rem;
+    display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
+    transition: background .15s;
+  }
+  .user-list li:hover { background: var(--surface2); }
+  .user-list li .udot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+  .user-list li.active-user .udot { background: var(--green); }
+  .user-list li .uname { flex: 1; }
+  .user-list li .uid { font-size: .7rem; color: var(--text-dim); font-family: monospace; }
+
+  .main { flex: 1; padding: 0 24px 24px; overflow-x: auto; }
+
+  /* Stats */
+  .stats { display: flex; gap: 12px; padding: 16px 0; flex-wrap: wrap; }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 16px; min-width: 110px; flex: 1;
+  }
+  .stat-card .label { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); }
+  .stat-card .value { font-size: 1.4rem; font-weight: 700; margin-top: 2px; }
+  .stat-card .value.green { color: var(--green); }
+  .stat-card .value.yellow { color: var(--yellow); }
+  .stat-card .value.purple { color: var(--purple); }
+
+  /* Toolbar */
+  .toolbar { display: flex; align-items: center; gap: 8px; padding: 0 0 12px; flex-wrap: wrap; }
+  .search-box {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 12px; color: var(--text);
+    font-size: .85rem; width: 220px; outline: none;
+  }
+  .search-box:focus { border-color: var(--accent); }
+  .search-box::placeholder { color: var(--text-dim); }
+  select {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 12px; color: var(--text); font-size: .85rem; outline: none; cursor: pointer;
+  }
+
+  .btn {
+    padding: 7px 16px; border: none; border-radius: 6px;
+    font-size: .85rem; font-weight: 500; cursor: pointer;
+    transition: all .15s; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-ghost { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
+  .btn-ghost:hover { color: var(--text); }
+
+  /* Table */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  th {
+    padding: 10px 12px; background: var(--surface2); text-align: left;
+    font-weight: 600; font-size: .75rem; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--text-dim); position: sticky; top: 0;
+    cursor: pointer; user-select: none; white-space: nowrap;
+  }
+  th:hover { color: var(--text); }
+  th .arrow { font-size: .65rem; margin-left: 4px; opacity: .5; }
+  th.sorted .arrow { opacity: 1; color: var(--accent); }
+  td { padding: 10px 12px; border-top: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: rgba(168,85,247,.04); }
+  tr.expired td { opacity: .5; }
+
+  @keyframes flashNew {
+    0%   { background: rgba(168,85,247,.35); }
+    30%  { background: rgba(168,85,247,.15); }
+    60%  { background: rgba(168,85,247,.25); }
+    100% { background: transparent; }
+  }
+  tr.new-hit td { animation: flashNew 3s ease-out forwards; }
+
+  .status-badge { display: inline-block; padding: 3px 10px; border-radius: 9999px; font-size: .72rem; font-weight: 600; }
+  .status-active { background: var(--green-bg); color: var(--green); }
+  .status-expired { background: var(--red-bg); color: var(--red); }
+  .reward { font-weight: 600; color: var(--green); }
+  .mono { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: .8rem; }
+  .truncate { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .empty-state { padding: 48px 24px; text-align: center; color: var(--text-dim); }
+  .empty-state .icon { font-size: 2.5rem; margin-bottom: 12px; opacity: .4; }
+
+  .footer {
+    padding: 8px 24px; font-size: .75rem; color: var(--text-dim);
+    border-top: 1px solid var(--border); display: flex;
+    justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
+  }
+
+  .refresh-ring { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; display: inline-block; vertical-align: middle; }
+  .refresh-ring.spinning { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .toast-container { position: fixed; top: 16px; right: 16px; z-index: 99999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+  .toast {
+    background: var(--surface); border: 1px solid var(--purple); border-left: 4px solid var(--purple);
+    border-radius: 8px; padding: 12px 16px; min-width: 300px; max-width: 420px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.5);
+    animation: slideIn .3s ease-out, fadeOut .5s 4.5s ease-in forwards; pointer-events: auto;
+  }
+  .toast .toast-title { font-weight: 700; font-size: .85rem; margin-bottom: 4px; color: var(--purple); }
+  .toast .toast-body { font-size: .78rem; color: var(--text-dim); line-height: 1.4; }
+  @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
+
+  @media (max-width: 768px) {
+    .layout { flex-direction: column; }
+    .sidebar { width: 100%; min-width: 0; max-height: 200px; border-right: none; border-bottom: 1px solid var(--border); }
+  }
+</style>
 </head>
 <body>
-  <h1>🔥 MTurk Accepted HITs (Live Monitor)</h1>
-  <span id="onlineCount">0 online</span>
-  <button id="enableNotif">Enable notifications</button>
 
-  <table>
-    <thead>
-      <tr>
-        <th>User</th>
-        <th>Worker ID</th>
-        <th>Requester</th>
-        <th>Title</th>
-        <th>Reward ($)</th>
-        <th>Accepted At</th>
-      </tr>
-    </thead>
-    <tbody id="hits-body"></tbody>
-  </table>
+<div class="toast-container" id="toastContainer"></div>
 
-  <div class="footer">
-    Real-time updates • Plays sound & shows desktop notifications when new HIT arrives
+<div class="header">
+  <h1>
+    <span class="dot" id="connDot"></span>
+    AB2 HIT Monitor
+    <span class="server-label">SERVER 2</span>
+    <span class="live-tag off" id="liveTag"><span class="live-dot"></span> LIVE</span>
+  </h1>
+  <div class="header-actions">
+    <label style="font-size:.8rem;color:var(--text-dim)">API:</label>
+    <input type="text" id="apiUrl" class="search-box" style="width:220px" value="http://192.227.99.48:8000" />
+    <button class="btn btn-ghost" onclick="connectApi()">Connect</button>
+    <label style="font-size:.8rem;color:var(--text-dim);display:flex;align-items:center;gap:4px">
+      <input type="checkbox" id="soundToggle" checked /> Sound
+    </label>
+    <span style="font-size:.75rem;color:var(--text-dim)" id="connStatus">Not connected</span>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="sidebar">
+    <h3>Server 2 Users <span id="userCount">(0)</span></h3>
+    <ul class="user-list" id="userList"></ul>
   </div>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import {
-      getFirestore, collection, onSnapshot,
-      doc, setDoc, deleteDoc, serverTimestamp
-    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  <div class="main">
+    <div class="stats">
+      <div class="stat-card"><div class="label">Total Hits (24h)</div><div class="value" id="statTotal">--</div></div>
+      <div class="stat-card"><div class="label">Active Now</div><div class="value green" id="statActive">--</div></div>
+      <div class="stat-card"><div class="label">Workers</div><div class="value purple" id="statWorkers">--</div></div>
+      <div class="stat-card"><div class="label">Working Now</div><div class="value green" id="statWorking">--</div></div>
+      <div class="stat-card"><div class="label">Total Reward</div><div class="value yellow" id="statReward">--</div></div>
+    </div>
 
-    // --- Firebase Config ---
-   const firebaseConfig = {
-      apiKey: "AIzaSyD_FH-65A526z8g9iGhSYKulS4yiv5e6Ys",
-      authDomain: "mturk-monitor.firebaseapp.com",
-      projectId: "mturk-monitor",
-      storageBucket: "mturk-monitor.firebasestorage.app",
-      messagingSenderId: "285174080989",
-      appId: "1:285174080989:web:e1f607e6a5f80463278234"
-    };
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
+    <div class="toolbar">
+      <input type="text" class="search-box" id="searchInput" placeholder="Search worker, user, title..." oninput="renderTable()" />
+      <select id="statusFilter" onchange="renderTable()">
+        <option value="all">All Statuses</option>
+        <option value="active">Active only</option>
+        <option value="expired">Expired only</option>
+      </select>
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" onclick="refresh()"><span class="refresh-ring" id="refreshRing"></span> Refresh</button>
+    </div>
 
-    // ----------------------------
-    // Presence (Firestore-only)
-    // ----------------------------
-    const ROOM = "index";
-    const HEARTBEAT_MS = 60_000;
-    const STALE_MS = 90_000;
-    const onlineEl = document.querySelector("#onlineCount");
-    const presenceCol = collection(db, `rooms/${ROOM}/presence`);
-    const sid = crypto.randomUUID?.() ?? Math.random().toString(36).slice(2);
-    const meRef = doc(presenceCol, sid);
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-col="user" onclick="sortBy('user')">User <span class="arrow">&#9650;</span></th>
+            <th data-col="worker_id" onclick="sortBy('worker_id')">Worker <span class="arrow">&#9650;</span></th>
+            <th data-col="requester" onclick="sortBy('requester')">Requester <span class="arrow">&#9650;</span></th>
+            <th data-col="title" onclick="sortBy('title')">Title <span class="arrow">&#9650;</span></th>
+            <th data-col="reward" onclick="sortBy('reward')">Reward <span class="arrow">&#9650;</span></th>
+            <th data-col="accepted_at" onclick="sortBy('accepted_at')">Accepted <span class="arrow">&#9650;</span></th>
+            <th data-col="time_remaining">Time Left</th>
+            <th data-col="status" onclick="sortBy('status')">Status <span class="arrow">&#9650;</span></th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <div class="empty-state" id="emptyState" style="display:none">
+        <div class="icon">&#128269;</div>
+        <p>No HITs from Server 2 workers yet. They will appear here live.</p>
+      </div>
+    </div>
+  </div>
+</div>
 
-    async function startPresence() {
-      setDoc(meRef, { since: serverTimestamp(), lastActive: serverTimestamp() }, { merge: true }).catch(()=>{});
-      const hb = setInterval(() => {
-        setDoc(meRef, { lastActive: serverTimestamp() }, { merge: true }).catch(()=>{});
-      }, HEARTBEAT_MS);
+<div class="footer">
+  <span id="footerLeft">Ready</span>
+  <span id="footerRight"></span>
+</div>
 
-      window.addEventListener("beforeunload", () => {
-        clearInterval(hb);
-        deleteDoc(meRef).catch(()=>{});
-      });
+<script>
+const SERVER = "server2";
+let API = "http://192.227.99.48:8000";
+let allHits = [];
+let newHitIds = new Set();
+let userMap = {};
+let sortCol = "accepted_at";
+let sortAsc = false;
+let connected = false;
+let evtSource = null;
 
-      onSnapshot(presenceCol, (snap) => {
-        const now = Date.now();
-        let count = 0;
-        snap.forEach(d => {
-          const t = d.data()?.lastActive;
-          const ms = t?.toMillis?.() ?? (t ? Date.parse(t) : 0);
-          if (ms && (now - ms) <= STALE_MS) count++;
-        });
-        onlineEl.textContent = `${count} online`;
-      });
-    }
-    startPresence();
+const $ = (id) => document.getElementById(id);
 
-    // ----------------------------
-    // HITs live listener
-    // ----------------------------
-    const tableBody = document.querySelector("#hits-body");
-    const soundUrl = "https://www.allbyjohn.com/sounds/mturkscanner/lessthan15Short.mp3";
-    let knownIds = new Set();
-
-    function playSound() {
-      const audio = new Audio(soundUrl);
-      audio.volume = 0.7;
-      audio.play().catch(e => console.warn("⚠️ Autoplay blocked:", e));
-    }
-
-    function renderTable(hits) {
-      tableBody.innerHTML = "";
-      hits.sort((a, b) => new Date(b.acceptedAt) - new Date(a.acceptedAt));
-      for (const h of hits) {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${h.user || "-"}</td>
-          <td>${h.workerId || "-"}</td>
-          <td>${h.requester || "-"}</td>
-          <td>${h.title || "-"}</td>
-          <td>${h.reward || 0}</td>
-          <td>${h.acceptedAt ? new Date(h.acceptedAt).toLocaleString() : "-"}</td>
-        `;
-        tableBody.appendChild(tr);
-      }
-    }
-
-    // ----------------------------
-    // 🔔 Desktop Notifications
-    // ----------------------------
-    const notifBtn = document.getElementById("enableNotif");
-
-    function updateNotifButton() {
-      if (!("Notification" in window)) {
-        notifBtn.style.display = "none";
-        return;
-      }
-      notifBtn.style.display = Notification.permission === "granted" ? "none" : "inline-block";
-    }
-
-    notifBtn.addEventListener("click", async () => {
-      if (!("Notification" in window)) return;
-      try {
-        await Notification.requestPermission();
-      } catch {}
-      updateNotifButton();
+// --- Sound ---
+let audioCtx = null;
+function playNotificationSound() {
+  if (!$("soundToggle").checked) return;
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = audioCtx.currentTime;
+    [620, 880].forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine"; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.2, now + i * 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.35);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(now + i * 0.12); osc.stop(now + i * 0.12 + 0.35);
     });
-    updateNotifButton();
+  } catch (_) {}
+}
 
-    const notifiedIds = new Set();
-    function notifyNewHit(h) {
-      if (!("Notification" in window)) return;
-      if (Notification.permission !== "granted") return;
-      if (!h?.assignmentId || notifiedIds.has(h.assignmentId)) return;
-
-      const title = `New HIT • ${h.requester || "Requester"}`;
-      const body  = `${h.title || "Untitled"}\nReward: $${h.reward || 0} • ${h.user || h.workerId || ""}`;
-      const n = new Notification(title, {
-        body,
-        tag: h.assignmentId,
-        renotify: false,
-        silent: true
-      });
-      n.onclick = () => {
-        window.focus();
-        try { n.close(); } catch {}
-      };
-      notifiedIds.add(h.assignmentId);
-      setTimeout(() => notifiedIds.delete(h.assignmentId), 120_000);
-      setTimeout(() => { try { n.close(); } catch {} }, 8000);
-    }
-
-    // ----------------------------
-    // Real-time Firestore updates
-    // ----------------------------
-    onSnapshot(collection(db, "hits"), (snapshot) => {
-      const hits = [];
-      const newIds = new Set();
-      const hitsById = new Map();
-
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        hits.push(data);
-        if (data.assignmentId) {
-          newIds.add(data.assignmentId);
-          hitsById.set(data.assignmentId, data);
-        }
-      });
-
-      // detect and alert new HITs
-      if (knownIds.size > 0) {
-        const added = Array.from(newIds).filter(id => !knownIds.has(id));
-        if (added.length > 0) {
-          playSound();
-          for (const id of added) {
-            const h = hitsById.get(id);
-            if (h) notifyNewHit(h);
-          }
-        }
-      }
-
-      knownIds = newIds;
-      renderTable(hits);
-      console.log("✅ Live update:", hits.length, "active HIT(s)");
+// --- Desktop notification ---
+function requestNotificationPermission() {
+  if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+}
+function showDesktopNotification(hit) {
+  if (!("Notification" in window) || Notification.permission !== "granted" || document.hasFocus()) return;
+  try {
+    new Notification("Server 2 - New HIT", {
+      body: (hit.user || hit.worker_id || "?") + " | " + (hit.title || "Untitled") + " | $" + (hit.reward || 0).toFixed(2),
+      tag: "ab2-s2-" + hit.assignment_id, silent: true
     });
-  </script>
+  } catch (_) {}
+}
+
+// --- Toast ---
+function showToast(hit) {
+  const c = $("toastContainer");
+  const t = document.createElement("div"); t.className = "toast";
+  t.innerHTML =
+    '<div class="toast-title">New HIT - Server 2</div>' +
+    '<div class="toast-body"><b>' + (hit.user || hit.worker_id || "?") + '</b> accepted "' +
+    (hit.title || "").slice(0, 60) + '" &mdash; <span style="color:var(--green);font-weight:700">$' +
+    (hit.reward || 0).toFixed(2) + '</span></div>';
+  c.appendChild(t);
+  setTimeout(() => { if (t.parentNode) t.remove(); }, 5500);
+}
+
+// --- SSE ---
+function connectSSE() {
+  if (evtSource) { evtSource.close(); evtSource = null; }
+  evtSource = new EventSource(API + "/api/hits/stream");
+
+  evtSource.addEventListener("new_hit", function (e) {
+    try {
+      const hit = JSON.parse(e.data);
+      if (hit.server !== SERVER) return;
+
+      const idx = allHits.findIndex(h => h.assignment_id === hit.assignment_id);
+      if (idx >= 0) allHits[idx] = hit; else allHits.unshift(hit);
+
+      newHitIds.add(hit.assignment_id);
+      setTimeout(() => newHitIds.delete(hit.assignment_id), 4000);
+
+      updateStats(); updateUserList(); renderTable();
+      playNotificationSound(); showToast(hit); showDesktopNotification(hit);
+      $("footerLeft").textContent = "LIVE: " + (hit.user || hit.worker_id) + " accepted a HIT";
+    } catch (_) {}
+  });
+
+  evtSource.addEventListener("ping", function () {});
+  evtSource.onopen = function () { $("liveTag").className = "live-tag"; $("footerRight").textContent = "SSE connected - " + new Date().toLocaleTimeString(); };
+  evtSource.onerror = function () { $("liveTag").className = "live-tag off"; setTimeout(connectSSE, 3000); };
+}
+
+// --- API ---
+async function apiFetch(path, opts) {
+  const r = await fetch(API + path, opts);
+  if (!r.ok) throw new Error(r.status + " " + r.statusText);
+  return r.json();
+}
+
+async function connectApi() {
+  API = $("apiUrl").value.replace(/\/+$/, "");
+  $("connDot").className = "dot connecting"; $("connStatus").textContent = "Connecting...";
+  try {
+    await apiFetch("/health");
+    connected = true;
+    $("connDot").className = "dot"; $("connStatus").textContent = "Connected";
+    const mapData = await apiFetch("/api/user-map?server=" + SERVER);
+    userMap = mapData.workerToUser || {};
+    await refresh();
+    connectSSE();
+    requestNotificationPermission();
+  } catch (e) {
+    connected = false;
+    $("connDot").className = "dot offline";
+    $("connStatus").textContent = "Failed: " + e.message;
+    $("liveTag").className = "live-tag off";
+  }
+}
+
+async function refresh() {
+  if (!connected) { await connectApi(); return; }
+  $("refreshRing").classList.add("spinning");
+  try {
+    allHits = await apiFetch("/api/hits?server=" + SERVER);
+    updateStats(); updateUserList(); renderTable();
+    $("footerLeft").textContent = allHits.length + " hit(s) loaded for " + SERVER;
+    $("footerRight").textContent = "Last refresh: " + new Date().toLocaleTimeString();
+  } catch (e) {
+    $("footerLeft").textContent = "Refresh failed: " + e.message;
+  }
+  $("refreshRing").classList.remove("spinning");
+}
+
+// --- User sidebar ---
+function updateUserList() {
+  const now = Date.now();
+  const activeWorkers = new Set();
+  allHits.forEach(h => {
+    if (h.expires_at && new Date(h.expires_at).getTime() > now && h.status !== "expired") {
+      activeWorkers.add(h.worker_id);
+    }
+  });
+
+  const entries = Object.entries(userMap).sort((a, b) => {
+    const aNum = parseInt((a[1] || "").replace(/\D/g, "")) || 9999;
+    const bNum = parseInt((b[1] || "").replace(/\D/g, "")) || 9999;
+    return aNum - bNum;
+  });
+
+  $("userCount").textContent = "(" + entries.length + ")";
+  $("userList").innerHTML = entries.map(([wid, usr]) => {
+    const isActive = activeWorkers.has(wid);
+    return '<li class="' + (isActive ? "active-user" : "") + '">' +
+      '<span class="udot"></span>' +
+      '<span class="uname">' + (usr || "?") + '</span>' +
+      '<span class="uid">' + wid.slice(-6) + '</span>' +
+    '</li>';
+  }).join("");
+
+  $("statWorkers").textContent = entries.length;
+  $("statWorking").textContent = activeWorkers.size;
+}
+
+// --- Stats ---
+function updateStats() {
+  const now = Date.now();
+  const active = allHits.filter(h => h.status !== "expired" && (!h.expires_at || new Date(h.expires_at).getTime() > now));
+  const totalReward = allHits.reduce((s, h) => s + (h.reward || 0), 0);
+  $("statTotal").textContent = allHits.length;
+  $("statActive").textContent = active.length;
+  $("statReward").textContent = "$" + totalReward.toFixed(2);
+}
+
+// --- Table ---
+function getFilteredHits() {
+  const q = $("searchInput").value.trim().toLowerCase();
+  const sf = $("statusFilter").value;
+  const now = Date.now();
+  return allHits.filter(h => {
+    const isExpired = h.status === "expired" || (h.expires_at && new Date(h.expires_at).getTime() < now);
+    if (sf === "active" && isExpired) return false;
+    if (sf === "expired" && !isExpired) return false;
+    if (q) {
+      const blob = [h.assignment_id, h.worker_id, h.user, h.requester, h.title].join(" ").toLowerCase();
+      if (!blob.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function sortBy(col) {
+  if (sortCol === col) sortAsc = !sortAsc; else { sortCol = col; sortAsc = true; }
+  document.querySelectorAll("th").forEach(th => {
+    th.classList.toggle("sorted", th.dataset.col === sortCol);
+    const a = th.querySelector(".arrow");
+    if (a) a.innerHTML = (th.dataset.col === sortCol && !sortAsc) ? "&#9660;" : "&#9650;";
+  });
+  renderTable();
+}
+
+function compareFn(a, b) {
+  let va = a[sortCol], vb = b[sortCol];
+  if (sortCol === "reward") { va = va || 0; vb = vb || 0; }
+  else { va = String(va || ""); vb = String(vb || ""); }
+  if (va < vb) return sortAsc ? -1 : 1;
+  if (va > vb) return sortAsc ? 1 : -1;
+  return 0;
+}
+
+function formatTimeLeft(hit) {
+  if (!hit.expires_at) return "--";
+  const ms = new Date(hit.expires_at).getTime() - Date.now();
+  if (ms <= 0) return '<span style="color:var(--red)">Expired</span>';
+  const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000);
+  const c = m < 2 ? "var(--red)" : m < 5 ? "var(--yellow)" : "var(--green)";
+  return '<span style="color:' + c + '">' + m + 'm ' + s + 's</span>';
+}
+
+function formatTime(iso) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function renderTable() {
+  const hits = getFilteredHits().sort(compareFn);
+  const tbody = $("tableBody"), empty = $("emptyState");
+  if (!hits.length) { tbody.innerHTML = ""; empty.style.display = ""; return; }
+  empty.style.display = "none";
+  const now = Date.now();
+  tbody.innerHTML = hits.map(h => {
+    const isExpired = h.status === "expired" || (h.expires_at && new Date(h.expires_at).getTime() < now);
+    const isNew = newHitIds.has(h.assignment_id);
+    const rc = (isExpired ? "expired" : "") + (isNew ? " new-hit" : "");
+    return '<tr class="' + rc + '">' +
+      '<td><b>' + (h.user || "?") + '</b></td>' +
+      '<td class="mono">' + (h.worker_id || "") + '</td>' +
+      '<td class="truncate">' + (h.requester || "") + '</td>' +
+      '<td class="truncate" title="' + (h.title || "").replace(/"/g, '&quot;') + '">' + (h.title || "") + '</td>' +
+      '<td class="reward">$' + (h.reward || 0).toFixed(2) + '</td>' +
+      '<td>' + formatTime(h.accepted_at) + '</td>' +
+      '<td>' + formatTimeLeft(h) + '</td>' +
+      '<td><span class="status-badge ' + (isExpired ? "status-expired" : "status-active") + '">' + (isExpired ? "expired" : "active") + '</span></td>' +
+    '</tr>';
+  }).join("");
+}
+
+setInterval(() => { if (allHits.length) renderTable(); }, 1000);
+setInterval(refresh, 60000);
+connectApi();
+</script>
 </body>
 </html>
